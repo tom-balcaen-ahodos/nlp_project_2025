@@ -1,0 +1,7 @@
+numpy~=2.1.2
+transformers~=4.49.0
+torch~=2.5.1+cu121
+pandas~=2.2.3
+datasets~=3.3.2
+scikit-learn~=1.6.1
+peft~=0.14.0
