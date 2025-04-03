@@ -5,7 +5,7 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer, Bits
 from trl import SFTConfig, SFTTrainer
 from datasets import load_dataset
 
-login(token = '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')
+login(token = 'TOKEN TOKEN')
 
 # bnb_config = BitsAndBytesConfig(
 #   load_in_4bit=True,
