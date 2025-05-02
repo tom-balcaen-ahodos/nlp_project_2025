@@ -10,8 +10,11 @@ from transformers import (
 import numpy as np
 import evaluate # Import the evaluate library
 from peft import LoraConfig, get_peft_model, TaskType # Import PEFT components
+from huggingface_hub import login
 
-csv_file_path = 'combined_df.csv'
+login(token = '')
+
+csv_file_path = 'train_set_small_df_filtered.csv'
 try:
     # Read CSV into a DataFrame named 'df' (or choose another name)
     train_dataset = pd.read_csv(csv_file_path, sep=';')
@@ -120,7 +123,7 @@ data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 # Define Training Arguments
 # (Using smaller batch size as an example, adjust based on your GPU)
 training_args = TrainingArguments(
-    output_dir="./distilbert_lora_email_classifier_2",
+    output_dir="./distilbert_lora_email_classifier_3",
     learning_rate=2e-4, # LoRA often benefits from slightly higher LR than full fine-tuning
     num_train_epochs=3,
     per_device_train_batch_size=8,  # Adjust based on GPU memory
@@ -165,7 +168,7 @@ trainer.train()
 
 # --- Optional: Save the trained adapter ---
 # After training, you can save just the trained LoRA adapter weights
-adapter_path = "./distilbert_email_classifier_adapter_2"
+adapter_path = "./distilbert_email_classifier_adapter_3"
 model.save_pretrained(adapter_path)
 print(f"LoRA adapter saved to {adapter_path}")
 
