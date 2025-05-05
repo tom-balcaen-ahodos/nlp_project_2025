@@ -18,9 +18,18 @@ from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_prec
 
 login(token = '')
 
-csv_file_path = 'train_set_small_df_filtered.csv'
-adapter_path = "./distilbert_email_classifier_adapter_1_1"
-confusion_matrix_fileName = "./confusion_matrix_bin_class_v1_1.png"
+print('CUDA? ', torch.cuda.is_available())
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+url_sufix = '_200k'
+version_suffix = '_v2'
+extra_info = ''
+csv_file_path = f'train_set_80_percent{url_sufix}.csv'
+adapter_path = f"./distilbert_email_bin_classifier_adapter{version_suffix}{url_sufix}{extra_info}"
+confusion_matrix_fileName = f"confusion_matrix_bin_class{url_sufix}{version_suffix}{extra_info}.png"
+output_dir=f"./distilbert_lora_email_classifier{url_sufix}{version_suffix}{extra_info}"
+roc_filename = f"./roc_curve_dl_train/roc_curve_roberta_bin_class{version_suffix}{url_sufix}{extra_info}.png"
+pr_filename = f"./pr_curve_dl_train/pr_curve_roberta_bin_class{version_suffix}{url_sufix}{extra_info}.png"
 
 try:
     # Read CSV into a DataFrame named 'df' (or choose another name)
@@ -110,7 +119,6 @@ lora_config = LoraConfig(
 # Load the base model *without* the PEFT modifications first
 base_model = AutoModelForSequenceClassification.from_pretrained(
     model_name,
-    device_map="cpu",
     num_labels=2,
     # Add label2id and id2label for clarity, Trainer might infer but explicit is better
     id2label={0: 'false', 1: 'true'},
@@ -131,15 +139,15 @@ data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 # Define Training Arguments
 # (Using smaller batch size as an example, adjust based on your GPU)
 training_args = TrainingArguments(
-    output_dir="./distilbert_lora_email_classifier_1_1",
+    output_dir=output_dir,
     learning_rate=2e-4, # LoRA often benefits from slightly higher LR than full fine-tuning
     num_train_epochs=1,
-    per_device_train_batch_size=8,  # Adjust based on GPU memory
-    per_device_eval_batch_size=16,
+    per_device_train_batch_size=16,  # Adjust based on GPU memory
+    per_device_eval_batch_size=32,
     weight_decay=0.01,
     logging_dir='./logs_lora',
     logging_steps=50, # Log more often maybe
-    evaluation_strategy="epoch",
+    eval_strategy="epoch",
     save_strategy="epoch",
     load_best_model_at_end=True,
     metric_for_best_model="accuracy", # Define a metric if using load_best_model_at_end
@@ -151,7 +159,9 @@ training_args = TrainingArguments(
 accuracy_metric = evaluate.load("accuracy")
 def compute_metrics(eval_pred):
     predictions, labels = eval_pred
-    # Ensure predictions are derived correctly (usually argmax for classification)
+    # Ensure predictions are derived correctly (usually argmax for classification).0.
+
+
     if isinstance(predictions, tuple): # Handle cases where model outputs more than just logits
         predictions = predictions[0]
     predictions = np.argmax(predictions, axis=1)
@@ -406,8 +416,8 @@ trainer.train()
 cm, roc_auc, average_precision = evaluate_with_metrics_and_plots(
     trainer, 
     eval_dataset, 
-    roc_filename="./roc_curve_bin_class_v1_1_1.png",
-    pr_filename="./pr_curve_bin_class_v1_1_1.png"
+    roc_filename=roc_filename,
+    pr_filename=pr_filename
 )
 
 # --- Optional: Save the trained adapter ---

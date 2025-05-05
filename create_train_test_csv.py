@@ -4,9 +4,9 @@ import re
 from langdetect import detect
 
 # Configuration
-number_of_rows = 5000
+number_of_rows = 100000
 
-url_sufix = '_5k'
+url_sufix = '_100k'
 input_file = '../salesforce_case_v2.csv'
 train_file = f"train_set_80_percent{url_sufix}.csv"
 test_file = f"test_set_20_percent{url_sufix}.csv"

@@ -5,6 +5,7 @@ from transformers import (
     AutoModelForSequenceClassification,
     Trainer,
     TrainingArguments,
+    IntervalStrategy,
     DataCollatorWithPadding # Good practice to explicitly use data collator
 )
 import numpy as np
@@ -14,12 +15,23 @@ from huggingface_hub import login
 import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score, confusion_matrix, classification_report
+from sklearn.preprocessing import label_binarize
 
 login(token = '')
 
-csv_file_path = 'train_set_small_df_filtered.csv'
-adapter_path = "./distilbert_email_multiclass_classifier_adapter_1"
-confusion_matrix_fileName = "confusion_matrix_multi_class_V1.png"
+print('CUDA? ', torch.cuda.is_available())
+print("TrainingArguments comes from:", TrainingArguments.__module__)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+url_sufix = '_200k'
+version_suffix = '_v1'
+extra_info = '_complaints_only'
+csv_file_path = f'train_set_80_percent_complaints_only{url_sufix}.csv'
+adapter_path = f"./distilbert_email_complaint_type_classifier_adapter{version_suffix}{url_sufix}{extra_info}"
+confusion_matrix_fileName = f"./confusion_matrix_complaint_type_class/confusion_matrix_complaint_type_class{url_sufix}{version_suffix}{extra_info}.png"
+roc_filename = f"./roc_curve_dl_train/roc_curve_roberta_complaint_type_multi_class{version_suffix}{url_sufix}{extra_info}.png"
+pr_filename = f"./pr_curve_dl_train/pr_curve_roberta_complaint_type_multi_class{version_suffix}{url_sufix}{extra_info}.png"
 
 try:
     # Read CSV into a DataFrame named 'df' (or choose another name)
@@ -45,12 +57,11 @@ def prepare_features(ds):
     return ds
 
 label_map = {
-    '': 0, 
-    'packaging': 1, 
-    'logistics': 2, 
-    'quality': 3, 
-    'not applicable': 4, 
-    'pricing errors': 5
+    'packaging': 0, 
+    'logistics': 1, 
+    'quality': 2, 
+    'not applicable': 3, 
+    'pricing errors': 4
 }
 
 
@@ -59,7 +70,7 @@ features = Features({
     'TextBody': Value('string'),
     'Complaint': Value('bool'),
     'text': Value('string'),
-    'label': ClassLabel(names=['', 'Packaging', 'Logistics', 'Quality', 'Not applicable', 'Pricing errors'])
+    'label': ClassLabel(names=['Packaging', 'Logistics', 'Quality', 'Not applicable', 'Pricing errors'])
 })
 
 
@@ -121,10 +132,9 @@ lora_config = LoraConfig(
 # Load the base model *without* the PEFT modifications first
 base_model = AutoModelForSequenceClassification.from_pretrained(
     model_name,
-    device_map="cpu",
-    num_labels=6,
-    id2label={0: '', 1: 'packaging', 2: 'logistics', 3: 'quality', 4: 'not applicable', 5: 'pricing errors'},
-    label2id={'': 0, 'packaging': 1, 'logistics': 2, 'quality': 3, 'not applicable': 4, 'pricing errors': 5}
+    num_labels=5,
+    id2label={0: 'packaging', 1: 'logistics', 2: 'quality', 3: 'not applicable', 4: 'pricing errors'},
+    label2id={'packaging': 0, 'logistics': 1, 'quality': 2, 'not applicable': 3, 'pricing errors': 4}
     # Add label2id and id2label for clarity, Trainer might infer but explicit is better
     # id2label={0: 'false', 1: 'true'},
     # label2id={'false': 0, 'true': 1}
@@ -144,15 +154,15 @@ data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 # Define Training Arguments
 # (Using smaller batch size as an example, adjust based on your GPU)
 training_args = TrainingArguments(
-    output_dir="./distilbert_lora_email_multiclass_classifier_1",
+    output_dir=adapter_path,
     learning_rate=2e-4, # LoRA often benefits from slightly higher LR than full fine-tuning
-    num_train_epochs=1,
+    num_train_epochs=3,
     per_device_train_batch_size=8,  # Adjust based on GPU memory
     per_device_eval_batch_size=16,
     weight_decay=0.01,
     logging_dir='./logs_lora',
     logging_steps=50, # Log more often maybe
-    evaluation_strategy="epoch",
+    eval_strategy=IntervalStrategy.EPOCH,
     save_strategy="epoch",
     load_best_model_at_end=True,
     metric_for_best_model="accuracy", # Define a metric if using load_best_model_at_end
@@ -263,6 +273,146 @@ def evaluate_with_confusion_matrix_pytorch(trainer, eval_dataset):
     
     return cm
 
+def run_inference(trainer, eval_dataset):
+    trainer.model.eval()
+    all_preds, all_labels, all_probs = [], [], []
+    eval_dataloader = trainer.get_eval_dataloader(eval_dataset)
+
+    with torch.no_grad():
+        for batch in eval_dataloader:
+            inputs = {k: v.to(trainer.model.device) for k, v in batch.items()}
+            if 'labels' in inputs:
+                labels = inputs['labels'].detach().cpu()
+            elif 'label' in inputs:
+                labels = inputs['label'].detach().cpu()
+            else:
+                print(f"Warning: No label found in batch: {list(inputs.keys())}")
+                continue
+
+            outputs = trainer.model(**inputs)
+            logits = outputs.logits.detach().cpu()
+            probs = torch.nn.functional.softmax(logits, dim=1)
+            preds = torch.argmax(logits, dim=1)
+            print('lables', labels)
+            all_preds.append(preds)
+            all_labels.append(labels)
+            all_probs.append(probs)
+
+    return (
+        torch.cat(all_preds),
+        torch.cat(all_labels),
+        torch.cat(all_probs),
+    )
+
+
+def compute_and_plot_confusion_matrix(preds, labels, class_names, filename):
+    cm = confusion_matrix(labels, preds, labels=list(range(len(class_names))))
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+                xticklabels=class_names, yticklabels=class_names)
+    plt.xlabel('Predicted')
+    plt.ylabel('True')
+    plt.title('Confusion Matrix')
+    plt.tight_layout()
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    plt.close()
+    return cm
+
+
+def print_metrics_from_confusion_matrix(cm, class_names):
+    print("\nPer-class metrics:")
+    print(f"{'Class':<15} {'Precision':<10} {'Recall':<10} {'F1':<10}")
+    print("-" * 45)
+
+    for i, class_name in enumerate(class_names):
+        tp = cm[i, i]
+        fp = cm[:, i].sum() - tp
+        fn = cm[i, :].sum() - tp
+
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+
+        print(f"{class_name:<15} {precision:.4f}     {recall:.4f}     {f1:.4f}")
+
+
+def plot_roc_curve(labels_bin, probs, class_names, filename):
+    num_classes = len(class_names)
+    fpr, tpr, roc_auc = {}, {}, {}
+    plt.figure(figsize=(10, 8))
+
+    for i in range(num_classes):
+        try:
+            fpr[i], tpr[i], _ = roc_curve(labels_bin[:, i], probs[:, i])
+            roc_auc[i] = auc(fpr[i], tpr[i])
+            plt.plot(fpr[i], tpr[i], label=f"{class_names[i]} (AUC = {roc_auc[i]:.2f})")
+        except ValueError:
+            roc_auc[i] = float('nan')
+            print(f"⚠️ ROC AUC could not be calculated for class '{class_names[i]}' (possibly missing positive samples)")
+
+    plt.plot([0, 1], [0, 1], 'k--')
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('ROC Curve')
+    plt.legend(loc='lower right')
+    plt.grid(True, alpha=0.3)
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    plt.close()
+
+    print("\nPer-class ROC AUC:")
+    for i in range(num_classes):
+        print(f"{class_names[i]:<15}: {roc_auc[i]:.4f}")
+    print(f"\nMacro-average ROC AUC: {np.nanmean(list(roc_auc.values())):.4f}")
+
+
+def plot_pr_curve(labels_bin, probs, class_names, filename):
+    num_classes = len(class_names)
+    ap_scores = {}
+    plt.figure(figsize=(10, 8))
+
+    for i in range(num_classes):
+        try:
+            precision, recall, _ = precision_recall_curve(labels_bin[:, i], probs[:, i])
+            ap_scores[i] = average_precision_score(labels_bin[:, i], probs[:, i])
+            plt.plot(recall, precision, label=f"{class_names[i]} (AP = {ap_scores[i]:.2f})")
+        except ValueError:
+            ap_scores[i] = float('nan')
+            print(f"⚠️ Average precision could not be calculated for class '{class_names[i]}'")
+
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.title('Precision-Recall Curve')
+    plt.legend(loc='lower left')
+    plt.grid(True, alpha=0.3)
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    plt.close()
+
+    print("\nPer-class Average Precision:")
+    for i in range(num_classes):
+        print(f"{class_names[i]:<15}: {ap_scores[i]:.4f}")
+    print(f"\nMacro-average Precision: {np.nanmean(list(ap_scores.values())):.4f}")
+
+
+def evaluate_with_metrics_and_plots(trainer, eval_dataset,
+                                     roc_filename=roc_filename,
+                                     pr_filename=pr_filename,
+                                     cm_filename=confusion_matrix_fileName):
+    all_preds, all_labels, all_probs = run_inference(trainer, eval_dataset)
+    class_names = list(trainer.model.config.id2label.values())
+
+    print(f"\n📊 Classification Report:\n")
+    labels = list(range(len(class_names)))  # [0, 1, 2, 3, 4]
+    print(classification_report(all_labels, all_preds, labels=labels, target_names=class_names, digits=5))
+
+    cm = compute_and_plot_confusion_matrix(all_preds, all_labels, class_names, cm_filename)
+    print_metrics_from_confusion_matrix(cm, class_names)
+
+    labels_bin = label_binarize(all_labels.numpy(), classes=list(range(len(class_names))))
+    plot_roc_curve(labels_bin, all_probs.numpy(), class_names, roc_filename)
+    plot_pr_curve(labels_bin, all_probs.numpy(), class_names, pr_filename)
+
+    return cm
+
 # Initialize the standard Trainer with the PEFT model
 trainer = Trainer(
     model=model, # Pass the PEFT model
@@ -279,7 +429,8 @@ print("Starting LoRA training...")
 trainer.train()
 
 # --- 9. Evaluate the model ---
-cm = evaluate_with_confusion_matrix_pytorch(trainer, eval_dataset)
+# cm = evaluate_with_confusion_matrix_pytorch(trainer, eval_dataset)
+cm = evaluate_with_metrics_and_plots(trainer, eval_dataset)
 
 # --- Optional: Save the trained adapter ---
 # After training, you can save just the trained LoRA adapter weights

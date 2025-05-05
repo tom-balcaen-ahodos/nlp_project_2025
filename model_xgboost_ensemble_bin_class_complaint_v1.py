@@ -7,16 +7,17 @@ from sklearn.metrics import accuracy_score, confusion_matrix, roc_curve, auc, pr
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-filepath_suffix = '_23k'
-version_suffix = '_v10'
+filepath_suffix = '_200k'
+version_suffix = '_v12'
+extra_info = '_n_estimators=300_max_depth=3'
 # File paths
 # csv_file_path = f'train_set_small_df_filtered{filepath_suffix}.csv'
-csv_file_path = f'train_set_md_df_filtered{filepath_suffix}.csv'
-model_path = f"./email_classifier_xgboost{version_suffix}{filepath_suffix}.json"
-confusion_matrix_fileName = f"./confusion_matrix_xgboost_bin_class{version_suffix}{filepath_suffix}.png"
-roc_filename = f"./roc_curve_xgboost_bin_class{version_suffix}{filepath_suffix}.png"
-pr_filename = f"./pr_curve_xgboost_bin_class{version_suffix}{filepath_suffix}.png"
-feature_importance_fileName = f"./feature_importance{version_suffix}{filepath_suffix}.png"
+csv_file_path = f'train_set_80_percent{filepath_suffix}.csv'
+model_path = f"./email_classifier_xgboost/email_classifier_xgboost{version_suffix}{filepath_suffix}.json"
+confusion_matrix_fileName = f"./confusion_matrix_xgboost_train/confusion_matrix_xgboost_bin_class{version_suffix}{filepath_suffix}{extra_info}.png"
+roc_filename = f"./roc_curve_xgboost_train/roc_curve_xgboost_bin_class{version_suffix}{filepath_suffix}{extra_info}.png"
+pr_filename = f"./pr_curve_xgboost_train/pr_curve_xgboost_bin_class{version_suffix}{filepath_suffix}{extra_info}.png"
+feature_importance_fileName = f"./feature_importance_train/feature_importance{version_suffix}{filepath_suffix}{extra_info}.png"
 # Load data
 try:
     train_dataset = pd.read_csv(csv_file_path, sep=';')
@@ -59,8 +60,8 @@ print(f"Testing data shape: {X_test_vec.shape}")
 # Train an XGBoost model
 print("Training XGBoost model...")
 model = xgb.XGBClassifier(
-    n_estimators=150,
-    max_depth=4,
+    n_estimators=300,
+    max_depth=3,
     learning_rate=0.1,
     subsample=0.8,
     colsample_bytree=0.8,
