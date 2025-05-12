@@ -16,6 +16,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score, confusion_matrix, classification_report
 from sklearn.preprocessing import label_binarize
+from collections import Counter
+from focal_loss import CustomTrainer, FocalLoss 
 
 login(token = '')
 
@@ -23,8 +25,8 @@ print('CUDA? ', torch.cuda.is_available())
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 url_sufix = '_200k'
-version_suffix = '_v6'
-extra_info = '_complaints_only'
+version_suffix = '_v7'
+extra_info = '_complaints_only_custom_weight_class'
 csv_file_path = f'train_set_80_percent_complaints_only{url_sufix}.csv'
 adapter_path = f"./distilbert_email_priority_classifier_adapter{version_suffix}{url_sufix}{extra_info}"
 confusion_matrix_fileName = f"./confusion_matrix_priority_class/confusion_matrix_priority_class{url_sufix}{version_suffix}{extra_info}.png"
@@ -155,7 +157,7 @@ data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 training_args = TrainingArguments(
     output_dir=f"./distilbert_lora_email_priority_classifier{version_suffix}",
     learning_rate=2e-4,
-    num_train_epochs=3,
+    num_train_epochs=1,
     per_device_train_batch_size=16,
     per_device_eval_batch_size=16,
     weight_decay=0.01,
@@ -406,8 +408,32 @@ def evaluate_with_metrics_and_plots(trainer, eval_dataset,
 
     return cm
 
+# Count label occurrences
+label_counts = Counter(processed_dataset['label'])
+
+# Ensure label order matches label_map
+num_classes = len(label_map)
+class_counts = torch.tensor([label_counts.get(i, 0) for i in range(num_classes)], dtype=torch.float)
+
+# Compute class weights (inverse frequency, normalized)
+class_weights = 1.0 / class_counts
+class_weights = class_weights / class_weights.sum()  # normalize
+class_weights = class_weights.to(device)
+
+focal_loss_fn = FocalLoss(alpha=class_weights, gamma=2.0)
+
 # Initialize the Trainer
-trainer = Trainer(
+# trainer = Trainer(
+#     model=model,
+#     args=training_args,
+#     train_dataset=train_dataset,
+#     eval_dataset=eval_dataset,
+#     tokenizer=tokenizer,
+#     data_collator=data_collator,
+#     compute_metrics=compute_metrics,
+# )
+
+trainer = CustomTrainer(
     model=model,
     args=training_args,
     train_dataset=train_dataset,
@@ -415,6 +441,7 @@ trainer = Trainer(
     tokenizer=tokenizer,
     data_collator=data_collator,
     compute_metrics=compute_metrics,
+    focal_loss_fn=focal_loss_fn
 )
 
 # --- Start Training ---

@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
 
-login(token = '')
+login(token = 'hf_crcKKAWjEbbnjXIQEtfGhSSyTdQgzlskHCH')
 
 print('CUDA? ', torch.cuda.is_available())
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

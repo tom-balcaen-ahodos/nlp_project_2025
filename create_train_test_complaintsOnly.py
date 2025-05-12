@@ -2,13 +2,15 @@ import pandas as pd
 import re
 import os
 from langdetect import detect
+import string
 
 # Configuration
 number_of_rows = 200000
 url_suffix = '_200k'
+version = '_V2'
 input_file = '../salesforce_case_v2.csv'
-train_file = f"train_set_80_percent_complaints_only{url_suffix}.csv"
-test_file = f"test_set_20_percent_complaints_only{url_suffix}.csv"
+train_file = f"train_set_80_percent_complaints_only{url_suffix}{version}.csv"
+test_file = f"test_set_20_percent_complaints_only{url_suffix}{version}.csv"
 
 def main():
     # Load dataset
@@ -27,7 +29,7 @@ def main():
     df['Complaint_type'] = df['AGR_Type_of_Complaint__c']
 
     # Clean text body
-    df['TextBody'] = df['TextBody'].apply(clean_body).apply(clean_text_of_textBody)
+    df['TextBody'] = df['TextBody'].apply(clean_body).apply(clean_text_of_textBody).apply(remove_punctuation)
 
     # Select relevant columns
     selected_columns = ['Subject', 'TextBody', 'Priority', 'AGR_Type_of_Complaint__c', 'Complaint', 'Complaint_type']
@@ -69,6 +71,12 @@ def clean_body(text):
         text = re.sub(r'###\s*.*\n', '', text, flags=re.MULTILINE)
         text = re.sub(r'\n{3,}', '\n\n', text)
         text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+def remove_punctuation(text):
+    if isinstance(text, str):
+        text.lower()
+        return text.translate(str.maketrans('', '', string.punctuation))
     return text
 
 def clean_text_of_textBody(text):

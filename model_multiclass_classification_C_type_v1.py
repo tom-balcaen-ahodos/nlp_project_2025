@@ -25,13 +25,14 @@ print("TrainingArguments comes from:", TrainingArguments.__module__)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 url_sufix = '_200k'
-version_suffix = '_v1'
-extra_info = '_complaints_only'
-csv_file_path = f'train_set_80_percent_complaints_only{url_sufix}.csv'
+version_suffix = '_v3'
+extra_info = '_complaints_only_dont_count_noapplicable'
+csv_file_path = f'train_set_80_percent_complaints_only{url_sufix}_without_not_applicable.csv'
 adapter_path = f"./distilbert_email_complaint_type_classifier_adapter{version_suffix}{url_sufix}{extra_info}"
 confusion_matrix_fileName = f"./confusion_matrix_complaint_type_class/confusion_matrix_complaint_type_class{url_sufix}{version_suffix}{extra_info}.png"
 roc_filename = f"./roc_curve_dl_train/roc_curve_roberta_complaint_type_multi_class{version_suffix}{url_sufix}{extra_info}.png"
 pr_filename = f"./pr_curve_dl_train/pr_curve_roberta_complaint_type_multi_class{version_suffix}{url_sufix}{extra_info}.png"
+train_val_loss_filename = f"./train_val_loss/train_val_loss_roberta_complaint_type_multi_class{version_suffix}{url_sufix}{extra_info}.png"
 
 try:
     # Read CSV into a DataFrame named 'df' (or choose another name)
@@ -60,8 +61,7 @@ label_map = {
     'packaging': 0, 
     'logistics': 1, 
     'quality': 2, 
-    'not applicable': 3, 
-    'pricing errors': 4
+    'pricing errors': 3
 }
 
 
@@ -70,7 +70,7 @@ features = Features({
     'TextBody': Value('string'),
     'Complaint': Value('bool'),
     'text': Value('string'),
-    'label': ClassLabel(names=['Packaging', 'Logistics', 'Quality', 'Not applicable', 'Pricing errors'])
+    'label': ClassLabel(names=['Packaging', 'Logistics', 'Quality', 'Pricing errors'])
 })
 
 
@@ -132,9 +132,9 @@ lora_config = LoraConfig(
 # Load the base model *without* the PEFT modifications first
 base_model = AutoModelForSequenceClassification.from_pretrained(
     model_name,
-    num_labels=5,
-    id2label={0: 'packaging', 1: 'logistics', 2: 'quality', 3: 'not applicable', 4: 'pricing errors'},
-    label2id={'packaging': 0, 'logistics': 1, 'quality': 2, 'not applicable': 3, 'pricing errors': 4}
+    num_labels=4,
+    id2label={0: 'packaging', 1: 'logistics', 2: 'quality', 3: 'pricing errors'},
+    label2id={'packaging': 0, 'logistics': 1, 'quality': 2, 'pricing errors': 3}
     # Add label2id and id2label for clarity, Trainer might infer but explicit is better
     # id2label={0: 'false', 1: 'true'},
     # label2id={'false': 0, 'true': 1}
@@ -156,7 +156,7 @@ data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 training_args = TrainingArguments(
     output_dir=adapter_path,
     learning_rate=2e-4, # LoRA often benefits from slightly higher LR than full fine-tuning
-    num_train_epochs=3,
+    num_train_epochs=5,
     per_device_train_batch_size=8,  # Adjust based on GPU memory
     per_device_eval_batch_size=16,
     weight_decay=0.01,
@@ -413,6 +413,7 @@ def evaluate_with_metrics_and_plots(trainer, eval_dataset,
 
     return cm
 
+
 # Initialize the standard Trainer with the PEFT model
 trainer = Trainer(
     model=model, # Pass the PEFT model
@@ -424,9 +425,52 @@ trainer = Trainer(
     compute_metrics=compute_metrics, # Add the compute_metrics function
 )
 
+def plot_train_val_loss(training_history, filename="train_val_loss.png"):
+    """
+    Plots the training and validation loss curves.
+
+    Args:
+        training_history: The training history (list of dictionaries) from the Trainer.state.log_history.
+        filename: The filename to save the plot to.
+    """
+    train_loss = []
+    eval_loss = []
+    eval_steps = []  # Store the steps/epochs where evaluation occurred
+
+    for entry in training_history:
+        if isinstance(entry, dict):
+            if 'loss' in entry:
+                train_loss.append(entry['loss'])
+            if 'eval_loss' in entry and entry['eval_loss'] is not None:
+                eval_loss.append(entry['eval_loss'])
+                if 'step' in entry:
+                    eval_steps.append(entry['step'])
+                elif 'epoch' in entry:
+                    eval_steps.append(entry['epoch'])
+
+    # Create epochs for training loss (align with steps if available)
+    if eval_steps:
+        epochs = eval_steps
+    else:
+        epochs = range(1, len(train_loss) + 1)
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(1, len(train_loss) + 1), train_loss, 'b-', label='Training Loss')
+    if eval_loss:
+        plt.plot(epochs, eval_loss, 'r-', label='Validation Loss')
+    plt.title('Training and Validation Loss')
+    plt.xlabel('Step/Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig(filename)
+    plt.show()
+
+# ... (your training loop)
 # --- 8. Start Training ---
 print("Starting LoRA training...")
 trainer.train()
+plot_train_val_loss(trainer.state.log_history)
 
 # --- 9. Evaluate the model ---
 # cm = evaluate_with_confusion_matrix_pytorch(trainer, eval_dataset)
